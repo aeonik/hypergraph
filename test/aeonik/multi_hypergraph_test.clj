@@ -1,6 +1,6 @@
-(ns aeonik.hypergraph-test
+(ns aeonik.multi-hypergraph-test
   (:require [clojure.test :refer :all]
-            [aeonik.hypergraph :refer :all]))
+            [aeonik.multi-hypergraph :refer :all]))
 
 (deftest a-test
   (testing "FIXME, I fail."

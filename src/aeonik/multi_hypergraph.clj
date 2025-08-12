@@ -1,5 +1,5 @@
-(ns aeonik.hypergraph
-  "A homoiconic hypergraph library for Clojure.
+(ns aeonik.multi-hypergraph
+  "A homoiconic multi-hypergraph library for Clojure.
 
   CORE CONCEPTS:
   - Nodes: Entities with an id, type, and optional span
@@ -50,7 +50,7 @@
 ;;; ============================================================================
 
 (defn empty-graph
-  "Create an empty hypergraph.
+  "Create an empty multi-hypergraph.
 
   Structure:
   - :nodes - map of id -> node

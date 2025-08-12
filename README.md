@@ -1,6 +1,6 @@
-# `aeonik/hypergraph`
+# `aeonik/multi-hypergraph`
 
-> **A homoiconic hypergraph library for Clojure** — minimal, composable, and built for structural sharing.
+> **A homoiconic multi-hypergraph library for Clojure** — minimal, composable, and built for structural sharing.
 
 Very early work in progress.
 
@@ -29,7 +29,7 @@ Very early work in progress.
 
 ```clojure
 (ns demo
-  (:require [aeonik.hypergraph :as hg]))
+  (:require [aeonik.multi-hypergraph :as hg]))
 
 ;; Create an empty graph
 (def g0 (hg/empty-graph))
@@ -105,7 +105,7 @@ Graphs are just nodes in bigger graphs:
 Add to deps.edn:
 
 ```clojure 
-aeonik/hypergraph {:git/url "https://github.com/aeonik/hypergraph"
+aeonik/multi-hypergraph {:git/url "https://github.com/aeonik/multi-hypergraph"
                    :git/sha "<latest-sha>"}
 ```
 ## 🧪 Development
