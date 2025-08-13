@@ -2,7 +2,7 @@
   "A homoiconic multi-hypergraph library for Clojure.
 
   CORE CONCEPTS:
-  - Nodes: Entities with an id, type, and optional span
+  - Nodes: Entities with id, type, and optional span
   - Edges: Hyperedges connecting multiple nodes via 'pins' with roles
   - Spans: Text/document ranges for spatial indexing
   - Graphs: Immutable structures with efficient structural sharing
@@ -12,37 +12,7 @@
   - Minimal core, infinite extensibility through composition
   - Overlapping spans? Another graph layer
   - Custom indices? Another graph
-  - Build operations? Also a graph
-
-  QUICK START:
-
-  ;; Basic usage
-  (def g (-> (empty-graph)
-             (add-node {:type :person :name \"Alice\"})
-             (add-node {:type :person :name \"Bob\"})
-             (add-edge {:type :knows
-                        :pins [{:node 0 :role :knower}
-                               {:node 1 :role :known}]})))
-
-  ;; Batch operations with transient
-  (def g2 (build g
-            (fn [b]
-              (-> b
-                  (add-node! {:type :doc :span {:start 0 :end 100}})
-                  (add-node! {:type :doc :span {:start 50 :end 150}})))))
-
-  ;; Graph composition for overlapping spans
-  (def base (-> (empty-graph)
-                (add-node {:type :text :content \"Hello world\"
-                          :span {:start 0 :end 11}})))
-
-  (def annotations (-> (empty-graph)
-                       (add-node {:type :highlight :color :yellow
-                                 :span {:start 0 :end 5}})
-                       (add-node {:type :highlight :color :blue
-                                 :span {:start 6 :end 11}})))
-
-  (def composite (compose-layers base annotations))"
+  - Build operations? Also a graph"
   (:require [clojure.set :as set]))
 
 ;;; ============================================================================
@@ -83,9 +53,10 @@
   [g kind id {:keys [start end]}]
   (if (and start end)
     (update-in g [:ix :spans start]
-               (fnil (fn [slot] (-> slot
-                                    (update :ids (fnil conj #{}) id)
-                                    (assoc :end end :kind kind)))
+               (fnil (fn [slot]
+                       (-> slot
+                           (update :ids (fnil conj #{}) id)
+                           (assoc :end end :kind kind)))
                      {:end end :ids #{id} :kind kind}))
     g))
 
@@ -113,9 +84,9 @@
   - ... any other keys stored as-is
 
   Example:
-  (add-node g {:type :element
-               :name \"div\"
-               :span {:start 0 :end 100}})"
+    (add-node g {:type :element
+                 :name \"div\"
+                 :span {:start 0 :end 100}})"
   [g {:keys [id type span] :as node}]
   (let [[id g] (if (some? id) [id g] (alloc g :next-nid))
         node   (assoc node :id id)]
@@ -123,7 +94,6 @@
         (assoc-in  [:nodes id] node)
         (update-in [:ix :by-type :node type] (fnil conj #{}) id)
         (index-span :node id span)
-        ;; ensure no future collisions when caller provided :id
         (update-in [:meta :next-nid] (fnil max 0) (inc id)))))
 
 (defn add-edge
@@ -140,16 +110,17 @@
   - :span (optional) - {:start N :end N} for spatial edges
 
   Example:
-  (add-edge g {:type :child
-               :pins [{:node 0 :role :parent}
-                      {:node 1 :role :child :i 0}
-                      {:node 2 :role :child :i 1}]})"
+    (add-edge g {:type :child
+                 :pins [{:node 0 :role :parent}
+                        {:node 1 :role :child :i 0}
+                        {:node 2 :role :child :i 1}]})"
   [g {:keys [id type pins attrs span] :as edge}]
   (doseq [p pins]
     (when-not (get-in g [:nodes (:node p)])
       (throw (ex-info "Pin references missing node" {:edge id :pin p}))))
   (let [[id g] (if (some? id) [id g] (alloc g :next-eid))
-        edge'  (-> edge (assoc :id id :attrs (or attrs {}) :pins (vec pins)))]
+        edge'  (-> edge
+                   (assoc :id id :attrs (or attrs {}) :pins (vec pins)))]
     (as-> g g
       (assoc-in g [:edges id] edge')
       (update-in g [:ix :by-type :edge type] (fnil conj #{}) id)
@@ -157,8 +128,8 @@
                 (update-in g [:ix :incidence node] (fnil conj #{}) id))
               g pins)
       (index-span g :edge id span)
-      ;; ensure no future collisions when caller provided :id
       (update-in g [:meta :next-eid] (fnil max 0) (inc id)))))
+
 (defn rem-edge
   "Remove an edge and update all indices."
   [g eid]
@@ -203,9 +174,9 @@
   - role: filter by pin role
 
   Examples:
-  (neighbors g 0)                    ; all neighbors
-  (neighbors g 0 :child nil)         ; via :child edges
-  (neighbors g 0 :child :parent)     ; parents in :child edges"
+    (neighbors g 0)                    ; all neighbors
+    (neighbors g 0 :child nil)         ; via :child edges
+    (neighbors g 0 :child :parent)     ; parents in :child edges"
   ([g nid] (neighbors g nid nil nil))
   ([g nid edge-type role]
    (let [eids (incident-edges g nid)]
@@ -223,25 +194,29 @@
 (defn edges-of-type [g t] (get-in g [:ix :by-type :edge t] #{}))
 (defn nodes-of-type [g t] (get-in g [:ix :by-type :node t] #{}))
 
-(defn covering
-  "Find what element covers position x in the span index.
-  Returns {:kind :node/:edge :start N :end N :ids #{}} or nil."
-  [g x]
-  (let [m   (get-in g [:ix :spans])
-        a   (subseq m <= x)
-        hit (last a)]
-    (when hit
-      (let [[start {:keys [end ids kind]}] hit]
-        (when (< x end) {:kind kind :start start :end end :ids ids})))))
+(defn find-id
+  "Find first node ID matching predicate."
+  [g pred]
+  (some (fn [[id n]] (when (pred n) id)) (:nodes g)))
+
+(defn covering [g x]
+  (let [m (get-in g [:ix :spans])]
+    (some (fn [[start {:keys [end ids kind]}]]
+            (when (< x end)
+              {:kind kind :start start :end end :ids ids}))
+          (rsubseq m <= x))))
 
 (defn covering-all
-  "All nodes/edges whose span covers x. Returns vector of {:kind :node/:edge :id id :start s :end e}."
+  "All nodes/edges whose span covers x.
+  Returns vector of {:kind :node/:edge :id id :start s :end e}."
   [g x]
   (let [m (get-in g [:ix :spans])]
-    (->> (subseq m <= x)                   ; all starts <= x
+    (->> (subseq m <= x)
          (reduce (fn [acc [s {:keys [end ids kind]}]]
                    (if (< x end)
-                     (into acc (map (fn [id] {:kind kind :id id :start s :end end}) ids))
+                     (into acc (map (fn [id]
+                                      {:kind kind :id id :start s :end end})
+                                    ids))
                      acc))
                  [])
          vec)))
@@ -251,8 +226,31 @@
 ;;; ============================================================================
 
 (defn bfs-seq
+  "Breadth-first traversal of the graph from given root node(s), yielding node ids in traversal order.
+
+  Arguments:
+    g      - Graph map
+    roots  - Collection of starting node ids
+
+  Options map (optional):
+    :edge-type  - Restrict traversal to edges of this type
+    :directed?  - If true, traverse only along edges where a pin of role `from-role` connects the current node,
+                  and pins of role `to-role` point to neighbors. For undirected traversal, all edges are traversed.
+    :from-role  - Role considered as the edge direction 'from' the current node (default :from)
+    :to-role    - Role considered as the edge direction 'to' neighbor nodes (default :to)
+
+  Returns:
+    A lazy sequence of node ids, in BFS order, starting from the given roots. Each node is visited at most once.
+
+  Example:
+    (bfs-seq graph [0])                            ; BFS from node 0 over all edges
+    (bfs-seq graph [0] {:edge-type :child})        ; Traverse only :child edges
+    (bfs-seq graph [0] {:directed? true
+                        :from-role :parent
+                        :to-role   :child})        ; Traverse 'child' direction"
   ([g roots] (bfs-seq g roots {}))
-  ([g roots {:keys [edge-type role]}]
+  ([g roots {:keys [edge-type directed? from-role to-role]
+             :or   {from-role :from, to-role :to}}]
    (letfn [(nbrs [nid]
              (let [eids (get-in g [:ix :incidence nid] #{})]
                (sequence
@@ -263,11 +261,17 @@
                            (for [p (:pins e)
                                  :let [m (:node p)]
                                  :when (and (not= m nid)
-                                            (or (nil? role) (= role (:role p))))]
+                                            (if directed?
+                                              (and (some #(and (= nid (:node %))
+                                                               (= from-role (:role %))) (:pins e))
+                                                   (= to-role (:role p)))
+                                              true))]
                              m))))
                 eids)))]
-     (let [q0   (into clojure.lang.PersistentQueue/EMPTY (distinct roots))
-           seen (volatile! (set roots))]
+     (let [valid-roots (->> (distinct roots)
+                            (filter #(contains? (:nodes g) %)))
+           q0   (into clojure.lang.PersistentQueue/EMPTY valid-roots)
+           seen (volatile! (set valid-roots))]
        (letfn [(step [q]
                  (lazy-seq
                   (when (seq q)
@@ -278,8 +282,31 @@
          (step q0))))))
 
 (defn dfs-seq
+  "Depth-first traversal of the graph from given root node(s), yielding node ids in traversal order.
+
+  Arguments:
+    g      - Graph map
+    roots  - Collection of starting node ids
+
+  Options map (optional):
+    :edge-type  - Restrict traversal to edges of this type
+    :directed?  - If true, traverse only along edges where a pin of role `from-role` connects the current node,
+                  and pins of role `to-role` point to neighbors. For undirected traversal, all edges are traversed.
+    :from-role  - Role considered as the edge direction 'from' the current node (default :from)
+    :to-role    - Role considered as the edge direction 'to' neighbor nodes (default :to)
+
+  Returns:
+    A lazy sequence of node ids, in DFS order, starting from the given roots. Each node is visited at most once.
+
+  Example:
+    (dfs-seq graph [0])                            ; DFS from node 0 over all edges
+    (dfs-seq graph [0] {:edge-type :child})        ; Traverse only :child edges
+    (dfs-seq graph [0] {:directed? true
+                        :from-role :parent
+                        :to-role   :child})        ; Traverse 'child' direction"
   ([g roots] (dfs-seq g roots {}))
-  ([g roots {:keys [edge-type role] :as opts}]
+  ([g roots {:keys [edge-type directed? from-role to-role]
+             :or   {from-role :from, to-role :to}}]
    (letfn [(nbrs [nid]
              (let [eids (get-in g [:ix :incidence nid] #{})]
                (sequence
@@ -290,50 +317,33 @@
                            (for [p (:pins e)
                                  :let [m (:node p)]
                                  :when (and (not= m nid)
-                                            (or (nil? role) (= role (:role p))))]
+                                            (if directed?
+                                              (and (some #(and (= nid (:node %))
+                                                               (= from-role (:role %))) (:pins e))
+                                                   (= to-role (:role p)))
+                                              true))]
                              m))))
                 eids)))]
-     (let [stack (vec (distinct roots))
-           seen  (volatile! (set roots))]
+     (let [valid-roots (->> (distinct roots)
+                            (filter #(contains? (:nodes g) %)))
+           stack (vec valid-roots)
+           seen  (volatile! (set valid-roots))]
        (letfn [(step [stk]
                  (lazy-seq
                   (when (seq stk)
                     (let [nid (peek stk)
-                          reststk (pop stk)]
-                      (if (contains? @seen nid)
-                        (step reststk)
-                        (do (vswap! seen conj nid)
-                            (let [ns (remove @seen (nbrs nid))]
-                              (cons nid (step (into reststk ns))))))))))]
+                          reststk (pop stk)
+                          ns (remove @seen (nbrs nid))]
+                      (vswap! seen into ns)
+                      (cons nid (step (into reststk ns)))))))]
          (step stack))))))
-
-(defn neighbors-seq
-  ([g nid] (neighbors-seq g nid nil nil))
-  ([g nid edge-type role]
-   (let [eids (incident-edges g nid)]
-     (sequence
-      (comp
-       (map #(get-in g [:edges %]))
-       (filter #(or (nil? edge-type) (= (:type %) edge-type)))
-       (mapcat (fn [e]
-                 (for [p (:pins e)
-                       :let [m (:node p)]
-                       :when (and (not= m nid)
-                                  (or (nil? role) (= role (:role p))))]
-                   m))))
-      eids))))
-
-(defn neighbors
-  ([g nid] (vec (distinct (neighbors-seq g nid nil nil))))
-  ([g nid edge-type role] (vec (distinct (neighbors-seq g nid edge-type role)))))
 
 ;;; ============================================================================
 ;;; Batch Operations with Transients
 ;;; ============================================================================
 
 (defn begin
-  "Begin a batch operation, returning a builder context.
-  Use with add-node!, add-edge!, then finish."
+  "Begin a batch operation, returning a builder context."
   [g]
   {:nodes* (transient (:nodes g))
    :edges* (transient (:edges g))
@@ -422,47 +432,152 @@
   "Ergonomic batch building with a function.
 
   Example:
-  (build g (fn [b]
-             (-> b
-                 (add-node! {:type :person :name \"Alice\"})
-                 (add-node! {:type :person :name \"Bob\"}))))"
+    (build g (fn [b]
+               (let [[b alice] (add-node! b {:type :person :name \"Alice\"})
+                     [b bob]   (add-node! b {:type :person :name \"Bob\"})
+                     [b _]     (add-edge! b {:type :knows
+                                             :pins [{:node alice :role :knower}
+                                                    {:node bob   :role :known}]})]
+                 b)))"
   [g f]
   (-> g begin f finish))
 
-(defn build-ops
-  "Build from a sequence of operations (data-driven).
-
-  Example:
-  (build-ops g [[:node {:type :person :name \"Alice\"}]
-                [:node {:type :person :name \"Bob\"}]
-                [:edge {:type :knows :pins [...]}]])"
-  [g ops]
-  (build g (fn [b]
-             (reduce (fn [b [op & args]]
-                       (case op
-                         :node (first (apply add-node! b args))
-                         :edge (first (apply add-edge! b args))
-                         b))
-                     b ops))))
-
 ;;; ============================================================================
-;;; Graph Composition & Layers
+;;; Threading-friendly DSL
 ;;; ============================================================================
 
-(defn graph-as-node
-  "Wrap an entire graph as a node for meta-graph composition.
-  This enables graphs of graphs!"
-  [g type]
-  {:type type :graph g})
+(defn begin*
+  "Start building a graph with the DSL.
+  Returns a state map with :b (builder) and :ids (alias->id map).
+
+  Usage:
+    (begin* (empty-graph))        ; Start fresh
+    (begin* existing-graph)       ; Continue building on existing graph"
+  [g]
+  {:b (begin g) :ids {} :base-graph g})
+
+(defn continue*
+  "Continue building on an existing graph, optionally with pre-bound aliases.
+
+  Usage:
+    (continue* g)                          ; Continue with no aliases
+    (continue* g {:alice 0 :bob 1})       ; Continue with ID aliases
+    (continue* g (find-aliases g :person [:name]))  ; Auto-discover aliases"
+  ([g]
+   (continue* g {}))
+  ([g aliases]
+   {:b (begin g) :ids aliases :base-graph g}))
+
+(defn find-aliases
+  "Find nodes and create aliases based on type and attribute.
+  Useful for continuing work on an existing graph.
+
+  Usage:
+    (find-aliases g :person [:name])       ; {:alice 0, :bob 1}
+    (find-aliases g :element [:name])      ; {:div 0, :span 1}
+    (find-aliases g :team [:name] \"team-\") ; {:team-eng 0, :team-design 1}"
+  ([g node-type key-path]
+   (find-aliases g node-type key-path ""))
+  ([g node-type key-path prefix]
+   (let [nodes-of-type (nodes-of-type g node-type)]
+     (reduce (fn [aliases nid]
+               (let [node (get-in g [:nodes nid])
+                     val (get-in node key-path)
+                     alias (keyword (str prefix
+                                         (-> val
+                                             str
+                                             clojure.string/lower-case
+                                             (clojure.string/replace #"[^a-z0-9]+" "-"))))]
+                 (assoc aliases alias nid)))
+             {}
+             nodes-of-type))))
+
+(defn with-aliases
+  "Add multiple aliases to the state at once.
+
+  Usage:
+    (-> state
+        (with-aliases {:alice 0 :bob 1})
+        (edge :knows [[:alice :knower] [:bob :known]]))"
+  [state aliases]
+  (update state :ids merge aliases))
+
+(defn finish*
+  "Finish building and return the final graph."
+  [{:keys [b]}]
+  (finish b))
+
+(defn- resolve-id [ids ref]
+  (cond
+    (keyword? ref) (or (ids ref)
+                       (throw (ex-info "Alias not bound" {:alias ref})))
+    (integer? ref) ref
+    :else (throw (ex-info "Pin ref must be alias keyword or integer id" {:ref ref}))))
+
+(defn node
+  "Add a node bound to an alias.
+
+  Usage:
+    (node state :alice {:type :person :name \"Alice\"})"
+  [state alias props]
+  (let [[b id] (add-node! (:b state) props)]
+    (-> state
+        (assoc :b b)
+        (update :ids assoc alias id))))
+
+(defn edge
+  "Add an edge with pins; pins accept aliases or ids.
+
+  Usage:
+    (edge state :knows [[:alice :knower] [:bob :known]])
+    (edge state :knows [[:alice :knower] [:bob :known]] {:since 2020})"
+  ([state etype pins]
+   (edge state etype pins nil))
+  ([state etype pins attrs]
+   (let [ids   (:ids state)
+         pins' (mapv (fn [[ref role & kvs]]
+                       (merge {:node (resolve-id ids ref)
+                               :role role}
+                              (apply hash-map kvs)))
+                     pins)
+         [b _] (add-edge! (:b state) {:type etype :pins pins' :attrs attrs})]
+     (assoc state :b b))))
+
+(defn child
+  "Helper for parent-child relationships.
+
+  Usage:
+    (child state :parent-alias :child-alias 0)"
+  [state parent child- idx]
+  (edge state :child [[parent :parent] [child- :child :i idx]]))
+
+(defn knows
+  "Helper for knowledge relationships.
+
+  Usage:
+    (knows state :alice :bob)"
+  [state knower known]
+  (edge state :knows [[knower :knower] [known :known]]))
+
+(defn member-of
+  "Helper for membership relationships.
+
+  Usage:
+    (member-of state :person :team)"
+  [state member group]
+  (edge state :member-of [[member :member] [group :group]]))
+
+;;; ============================================================================
+;;; Graph Composition & Utilities
+;;; ============================================================================
 
 (defn compose-layers
   "Compose multiple graph layers into a meta-graph.
-  Each layer becomes a node, with edges describing relationships.
 
   Example:
-  (compose-layers {:base text-graph
-                   :annotations highlight-graph
-                   :comments comment-graph})"
+    (compose-layers {:base text-graph
+                     :annotations highlight-graph
+                     :comments comment-graph})"
   [layer-map]
   (let [entries (seq layer-map)
         b0      (begin (empty-graph))
@@ -476,8 +591,123 @@
      :layers     layer-map
      :node-ids   ids}))
 
+(defn subgraph
+  "Extract a subgraph containing only specified nodes and their edges."
+  [g node-ids]
+  (let [nid-set (set node-ids)
+        nodes   (select-keys (:nodes g) node-ids)
+        edges   (into {} (filter (fn [[eid edge]]
+                                   (every? #(nid-set (:node %)) (:pins edge)))
+                                 (:edges g)))]
+    (build (empty-graph)
+           (fn [b]
+             (let [b' (reduce (fn [b node] (first (add-node! b node)))
+                              b (vals nodes))]
+               (reduce (fn [b edge] (first (add-edge! b edge)))
+                       b' (vals edges)))))))
+
+(defn merge-graphs
+  "Merge two graphs with ID offset to avoid conflicts."
+  [g1 g2]
+  (let [nid-off (get-in g1 [:meta :next-nid] 0)
+        eid-off (get-in g1 [:meta :next-eid] 0)
+        remap-n (fn [nid] (+ nid nid-off))
+        remap-e (fn [eid] (+ eid eid-off))]
+    (build g1
+           (fn [b]
+             (let [b (reduce (fn [b [_ node]]
+                               (first (add-node! b (update node :id remap-n))))
+                             b (:nodes g2))
+                   b (reduce (fn [b [_ edge]]
+                               (let [pins' (mapv #(update % :node remap-n) (:pins edge))]
+                                 (first (add-edge! b (-> edge
+                                                         (update :id remap-e)
+                                                         (assoc :pins pins'))))))
+                             b (:edges g2))]
+               b)))))
+
+(defn assert-graph
+  "Verify graph integrity. Throws if indices are inconsistent."
+  [g]
+  (let [nodes (:nodes g) edges (:edges g)
+        {:keys [incidence by-type spans]} (:ix g)]
+    ;; Check pins reference existing nodes
+    (doseq [[eid e] edges
+            {:keys [node]} (:pins e)]
+      (when-not (contains? nodes node)
+        (throw (ex-info "Dangling pin" {:eid eid :node node}))))
+    ;; Check incidence index
+    (doseq [[nid eids] incidence
+            :when (not (contains? nodes nid))]
+      (throw (ex-info "Incidence for missing node" {:nid nid})))
+    ;; Check by-type index
+    (doseq [[t nids] (get by-type :node)
+            nid nids]
+      (when-not (contains? nodes nid)
+        (throw (ex-info "by-type node mismatch" {:type t :nid nid}))))
+    true))
+
+;; -----------------------------------------------------------------------------
+;; Streaming & Data-Driven Utilities (ported/adapted)
+;; -----------------------------------------------------------------------------
+
+(defn neighbors-seq
+  "Lazy stream of neighbor node-ids for nid, optionally filtered.
+   Options:
+     edge-type  - restrict to edges of this type
+     role       - restrict neighbor pins by role
+   Notes: This is undirected like `neighbors`; if you need direction, use BFS/DFS
+   with {:directed? true ...}."
+  ([g nid] (neighbors-seq g nid nil nil))
+  ([g nid edge-type role]
+   (let [eids (incident-edges g nid)]
+     (sequence
+      (comp
+       (map #(get-in g [:edges %]))
+       (filter #(or (nil? edge-type) (= (:type %) edge-type)))
+       (mapcat (fn [e]
+                 (for [p (:pins e)
+                       :let [m (:node p)]
+                       :when (and (not= m nid)
+                                  (or (nil? role) (= role (:role p))))]
+                   m))))
+      eids))))
+
+(defn build-ops
+  "Build a graph from a sequence of ops (data-driven).
+   ops is a seq of:
+     [:node node-map] | [:edge edge-map] | [:rem-node nid] | [:rem-edge eid]
+   Returns a new graph."
+  [g ops]
+  (build g
+         (fn [b]
+           (reduce
+            (fn [b [op arg]]
+              (case op
+                :node
+                (first (add-node! b arg))
+
+                :edge
+                (first (add-edge! b arg))
+
+                :rem-node
+                (if (some? arg)
+              ;; finish current batch, mutate immutably, start a fresh builder
+                  (begin (rem-node (finish b) arg))
+                  b)
+
+                :rem-edge
+                (if (some? arg)
+                  (begin (rem-edge (finish b) arg))
+                  b)
+
+            ;; unknown op -> no-op
+                b))
+            b
+            ops))))
+
 (defn reindex
-  "Rebuild :ix from :nodes and :edges. Keeps :meta as-is."
+  "Rebuild :ix entirely from :nodes and :edges. Keeps :meta as-is."
   [g]
   (let [incidence (transient {})
         btn      (transient {})
@@ -511,74 +741,25 @@
                                 :edge (persistent! bte)}
                     :spans     (into (sorted-map) (persistent! spans))}))))
 
-(defn merge-graphs
-  "Merge two graphs with ID offset to avoid conflicts.
-
-  Strategies:
-  - :offset - offset g2's IDs (default)
-  - :prefix - prefix g2's IDs
-  - :custom - provide own ID mapping function"
-  ([g1 g2] (merge-graphs g1 g2 :offset))
-  ([g1 g2 strategy]
-   (case strategy
-     :offset
-     (let [nid-off (get-in g1 [:meta :next-nid] 0)
-           eid-off (get-in g1 [:meta :next-eid] 0)
-           remap-n (fn [nid] (+ nid nid-off))
-           remap-e (fn [eid] (+ eid eid-off))
-           nodes2' (into {}
-                         (map (fn [[id node]]
-                                (let [id' (remap-n id)]
-                                  [id' (-> node (assoc :id id'))]))
-                              (:nodes g2)))
-           edges2' (into {}
-                         (map (fn [[id edge]]
-                                (let [id'   (remap-e id)
-                                      pins' (mapv #(update % :node remap-n) (:pins edge))]
-                                  [id' (-> edge (assoc :id id' :pins pins'))]))
-                              (:edges g2)))
-           g* (-> g1
-                  (update :nodes merge nodes2')
-                  (update :edges merge edges2')
-                  (assoc-in [:meta :next-nid]
-                            (max (get-in g1 [:meta :next-nid] 0)
-                                 (+ nid-off (get-in g2 [:meta :next-nid] 0))))
-                  (assoc-in [:meta :next-eid]
-                            (max (get-in g1 [:meta :next-eid] 0)
-                                 (+ eid-off (get-in g2 [:meta :next-eid] 0)))))]
-       (reindex g*))
-     (throw (ex-info "Unknown merge strategy" {:strategy strategy})))))
-;;; ============================================================================
-;;; Self-Describing Operations (Homoiconic)
-;;; ============================================================================
+;; -----------------------------------------------------------------------------
+;; Homoiconic ops (graphs that describe building graphs)
+;; -----------------------------------------------------------------------------
 
 (defn op-node
-  "Create a node representing a graph operation.
-  The graph can describe its own construction!"
+  "A node that describes a graph operation (for self-describing graphs)."
   [op-type args]
   {:type :operation
    :op   op-type
    :args args})
 
 (defn interpret-ops
-  "Execute a graph of operations to build a new graph.
-
-  Example:
-  (def ops-graph
-    (-> (empty-graph)
-        (add-node (op-node :add-node {:type :person :name \"Alice\"}))
-        (add-node (op-node :add-node {:type :person :name \"Bob\"}))
-        (add-node (op-node :add-edge {:type :knows :pins [...]}))
-        (add-edge {:type :depends-on :pins [...]}))) ; order deps
-
-  (def result (interpret-ops ops-graph))"
+  "Execute operations stored in an ops-graph.
+   Currently runs op-nodes in numeric id order (simple, deterministic).
+   Supported ops: :add-node, :add-edge, :rem-node, :rem-edge"
   [ops-graph]
-  (let [op-nodes (nodes-of-type ops-graph :operation)
-        ;; TODO: topological sort based on :depends-on edges
-        sorted-ops op-nodes]
+  (let [op-nids (sort (nodes-of-type ops-graph :operation))]
     (reduce (fn [g nid]
-              (let [node (get-in ops-graph [:nodes nid])
-                    {:keys [op args]} node]
+              (let [{:keys [op args]} (get-in ops-graph [:nodes nid])]
                 (case op
                   :add-node (add-node g args)
                   :add-edge (add-edge g args)
@@ -586,15 +767,17 @@
                   :rem-edge (rem-edge g args)
                   g)))
             (empty-graph)
-            sorted-ops)))
+            op-nids)))
 
-;;; ============================================================================
-;;; Utilities
-;;; ============================================================================
+;; -----------------------------------------------------------------------------
+;; Tree/DOM helpers
+;; -----------------------------------------------------------------------------
 
 (defn attach-element
-  "Helper for building tree structures (like DOM/AST).
-  Recursively attaches an element and its children."
+  "Recursively attach an element tree (like DOM/AST) under optional parent.
+   Node map keys:
+     :name :span {:start :end} :attrs {:...} :children [child ...]
+   Returns updated graph."
   [g {:keys [name span attrs children]} parent-nid k-idx]
   (let [[nid g1] (alloc g :next-nid)
         g2       (add-node g1 {:id nid :type :element :name name
@@ -602,7 +785,7 @@
         g3       (if parent-nid
                    (add-edge g2 {:type :child
                                  :pins [{:node parent-nid :role :parent}
-                                        {:node nid :role :child :i k-idx}]})
+                                        {:node nid        :role :child :i k-idx}]})
                    g2)]
     (loop [g g3, i 0, cs children]
       (if (seq cs)
@@ -611,309 +794,220 @@
                (rest cs))
         g))))
 
-(defn subgraph
-  "Extract a subgraph containing only specified nodes and their edges."
-  [g node-ids]
-  (let [nid-set (set node-ids)
-        nodes   (select-keys (:nodes g) node-ids)
-        edges   (into {} (filter (fn [[eid edge]]
-                                   (every? #(nid-set (:node %)) (:pins edge)))
-                                 (:edges g)))]
-    ;; Build fresh graph with just these elements
-    (build (empty-graph)
-           (fn [b]
-             (let [b' (reduce (fn [b node] (first (add-node! b node)))
-                              b (vals nodes))]
-               (reduce (fn [b edge] (first (add-edge! b edge)))
-                       b' (vals edges)))))))
+(defn children-ordered
+  "Return a vector of child node-ids of nid, ordered by pin :i."
+  [g nid]
+  (->> (edges-of-type g :child)
+       (map #(get-in g [:edges %]))
+       (keep (fn [e]
+               (when (some #(and (= (:role %) :parent)
+                                 (= (:node %) nid))
+                           (:pins e))
+                 (some #(when (= (:role %) :child) %) (:pins e)))))
+       (sort-by :i)
+       (mapv :node)))
 
-(defn assert-graph
-  "Throws if broken indices or dangling refs. O(|nodes|+|edges|)."
-  [g]
-  (let [nodes (:nodes g) edges (:edges g)
-        {:keys [incidence by-type spans]} (:ix g)]
-    ;; pins reference existing nodes
-    (doseq [[eid e] edges
-            :let [pins (:pins e)]]
-      (doseq [{:keys [node]} pins]
-        (when-not (contains? nodes node)
-          (throw (ex-info "Dangling pin" {:eid eid :node node})))))
-    ;; incidence matches edges
-    (doseq [[nid eids] incidence
-            :when (not (contains? nodes nid))]
-      (throw (ex-info "Incidence for missing node" {:nid nid})))
-    (doseq [[eid e] edges
-            :when (not-every? #(contains? (get incidence (:node %)) eid) (:pins e))]
-      (throw (ex-info "Incidence mismatch" {:eid eid})))
-    ;; by-type contains ids
-    (doseq [[t nids] (get by-type :node)]
-      (doseq [nid nids]
-        (when-not (contains? nodes nid)
-          (throw (ex-info "by-type node mismatch" {:type t :nid nid})))))
-    (doseq [[t eids] (get by-type :edge)]
-      (doseq [eid eids]
-        (when-not (contains? edges eid)
-          (throw (ex-info "by-type edge mismatch" {:type t :eid eid})))))
-    ;; spans slots reference existing ids
-    (doseq [[s {:keys [ids kind end]}] spans
-            id ids]
-      (case kind
-        :node (when-not (contains? nodes id)
-                (throw (ex-info "span refers to missing node" {:start s :id id})))
-        :edge (when-not (contains? edges id)
-                (throw (ex-info "span refers to missing edge" {:start s :id id})))
-        (throw (ex-info "unknown span kind" {:kind kind}))))
-    true))
+;; -----------------------------------------------------------------------------
+;; Curried DSL wrappers (ergonomic composition)
+;; -----------------------------------------------------------------------------
+
+(defn node*
+  "Curried node adder for ->, comp, etc.
+   Usage:
+     (-> (begin* g) (node* :a {:type :x}) ... finish*)"
+  [alias props]
+  (fn [state]
+    (let [[b id] (add-node! (:b state) props)]
+      (-> state
+          (assoc :b b)
+          (update :ids assoc alias id)))))
+
+(defn edge*
+  "Curried edge creator for DSL.
+   Pins accept aliases or ids. Example:
+     (edge* :child [[:p :parent] [:c :child :i 0]] {:k v})"
+  ([etype pins] (edge* etype pins nil))
+  ([etype pins attrs]
+   (fn [state]
+     (let [ids (:ids state)
+           pins' (mapv (fn [[ref role & kvs]]
+                         (merge {:node (if (keyword? ref)
+                                         (or (ids ref)
+                                             (throw (ex-info "Alias not bound " {:alias ref})))
+                                         (if (integer? ref) ref
+                                             (throw (ex-info "Pin ref must be alias keyword or integer id " {:ref ref}))))
+                                 :role role}
+                                (apply hash-map kvs)))
+                       pins)
+           [b _] (add-edge! (:b state) {:type etype :pins pins' :attrs attrs})]
+       (assoc state :b b)))))
+
+(defn child*
+  "Curried sugar for parent/child edges with index."
+  [parent child- idx]
+  (edge* :child [[parent :parent] [child- :child :i idx]]))
 
 ;;; ============================================================================
-;;; Examples & Cookbook
+;;; Examples & Quick Start
 ;;; ============================================================================
 
 (comment
-;;; ============================================================================
-;;; 0) Setup
-;;; ============================================================================
+  ;; Basic usage - people and relationships
+  (def people-graph
+    (build (empty-graph)
+           (fn [b]
+             (let [[b alice] (add-node! b {:type :person :name "Alice"})
+                   [b bob]   (add-node! b {:type :person :name "Bob"})
+                   [b carol] (add-node! b {:type :person :name "Carol"})
+                   [b _]     (add-edge! b {:type :knows
+                                           :pins [{:node alice :role :knower}
+                                                  {:node bob   :role :known}]})
+                   [b _]     (add-edge! b {:type :knows
+                                           :pins [{:node bob :role :knower}
+                                                  {:node carol :role :known}]})]
+               b))))
 
-  (def g0 (empty-graph))
+  ;; Query neighbors
+  (neighbors people-graph 0 :knows :known)  ; => [1] (Bob)
 
-;;; ============================================================================
-;;; 1) Basic nodes/edges (explicit & implicit IDs)
-;;; ============================================================================
+  ;; DSL style - more ergonomic for complex graphs
+  (def tree-graph
+    (-> (begin* (empty-graph))
+        (node :root {:type :element :name "html"})
+        (node :head {:type :element :name "head"})
+        (node :body {:type :element :name "body"})
+        (node :div1 {:type :element :name "div" :class "container"})
+        (node :div2 {:type :element :name "div" :class "content"})
+        (child :root :head 0)
+        (child :root :body 1)
+        (child :body :div1 0)
+        (child :body :div2 1)
+        finish*))
 
-  ;; Implicit IDs
-  (def g1 (-> g0
-              (add-node {:type :person :name "Alice"})
-              (add-node {:type :person :name "Bob"})
-              (add-node {:type :project :name "Hypergraph"})))
+  ;; Building a social graph with the DSL
+  (def social-graph
+    (-> (begin* (empty-graph))
+        (node :alice {:type :person :name "Alice" :age 30})
+        (node :bob   {:type :person :name "Bob" :age 25})
+        (node :carol {:type :person :name "Carol" :age 28})
+        (node :team1 {:type :team :name "Engineering"})
+        (node :team2 {:type :team :name "Design"})
+        (knows :alice :bob)
+        (knows :bob :carol)
+        (member-of :alice :team1)
+        (member-of :bob :team1)
+        (member-of :carol :team2)
+        finish*))
 
-  ;; Explicit ID (counter bumps so no collisions later)
-  (def g1' (add-node g1 {:id 42 :type :person :name "Carol"}))
-  (get-in g1' [:nodes 42]) ;; => {:id 42, :type :person, ...}
+  ;; CONTINUING/EXTENDING an existing graph
+  (def initial-graph
+    (-> (begin* (empty-graph))
+        (node :alice {:type :person :name "Alice"})
+        (node :bob {:type :person :name "Bob"})
+        (knows :alice :bob)
+        finish*))
 
-  ;; Hyperedge with roles
-  (def g2 (-> g1'
-              (add-edge {:type :knows
-                         :pins [{:node 0 :role :knower}
-                                {:node 1 :role :known}]})
-              (add-edge {:type :works-on
-                         :pins [{:node 0 :role :worker}
-                                {:node 2 :role :project}]
-                         :attrs {:hours-per-week 20}})))
+  ;; Method 1: Continue with manual aliases
+  (def extended-graph-v1
+    (-> (continue* initial-graph {:alice 0 :bob 1})
+        (node :carol {:type :person :name "Carol"})
+        (knows :bob :carol)
+        (knows :carol :alice)
+        finish*))
 
-  (neighbors g2 0)             ;; => [1 2]
-  (neighbors g2 0 :knows nil)  ;; => [1]
-  (edges-of-type g2 :works-on) ;; => #{1}  (ids will vary)
+  ;; Method 2: Auto-discover aliases from existing nodes
+  (def extended-graph-v2
+    (let [aliases (find-aliases initial-graph :person [:name])]
+      (-> (continue* initial-graph aliases)
+          (node :carol {:type :person :name "Carol"})
+          (knows (aliases :alice) :carol)
+          (knows :carol (aliases :bob))
+          finish*)))
 
-;;; ============================================================================
-;;; 2) Batch build (transients) and data-driven ops
-;;; ============================================================================
+  ;; Method 3: Mix IDs and aliases
+  (def extended-graph-v3
+    (-> (continue* initial-graph)
+        (node :carol {:type :person :name "Carol"})
+        (edge :knows [[0 :knower] [:carol :known]])  ; 0 is Alice's ID
+        (edge :knows [[:carol :knower] [1 :known]])  ; 1 is Bob's ID
+        finish*))
 
-  ;; Builder API
-  (def g3 (build g0
-                 (fn [b]
-                   (let [[b a] (add-node! b {:type :doc :content "Hello"})
-                         [b z] (add-node! b {:type :doc :content "World"})
-                         [b _] (add-edge! b {:type :link
-                                             :pins [{:node a :role :from}
-                                                    {:node z :role :to}]})]
-                     b))))
+  ;; Streaming pattern - adding nodes/edges incrementally
+  (defn add-person-to-graph [g person-name]
+    (-> (continue* g)
+        (node (keyword (clojure.string/lower-case person-name))
+              {:type :person :name person-name})
+        finish*))
 
-  ;; Data-driven ops
-  (def g4 (build-ops g0
-                     [[:node {:type :lang :name "Clojure"}]
-                      [:node {:type :lang :name "Idris2"}]
-                      [:edge {:type :influences
-                              :pins [{:node 0 :role :src}
-                                     {:node 1 :role :dst}]}]]))
-  (neighbors g4 0 :influences :dst) ;; => [1]
+  (def streaming-graph
+    (reduce add-person-to-graph
+            (empty-graph)
+            ["Alice" "Bob" "Carol" "David"]))
 
-;;; ============================================================================
-;;; 3) Removal and integrity checks
-;;; ============================================================================
+  ;; Complex streaming with relationships
+  (defn add-friendship [g person1-id person2-id]
+    (-> (continue* g)
+        (edge :knows [[person1-id :knower] [person2-id :known]])
+        finish*))
 
-  ;; Remove edge
-  (def e-to-drop (first (edges-of-type g2 :knows)))
-  (def g5 (rem-edge g2 e-to-drop))
-  (edges-of-type g5 :knows) ;; => #{}
+  (def graph-with-friendships
+    (-> streaming-graph
+        (add-friendship 0 1)  ; Alice knows Bob
+        (add-friendship 1 2)  ; Bob knows Carol
+        (add-friendship 2 3)  ; Carol knows David
+        (add-friendship 3 0))) ; David knows Alice
 
-  ;; Remove node (and all incident edges)
-  (def g6 (rem-node g2 1))
-  (get-in g6 [:nodes 1]) ;; => nil
-  (incident-edges g6 1)  ;; => #{}
-
-  ;; Optional: fast sanity checks during dev
-  #_(assert-graph g6) ;; throws if indices are inconsistent
-
-;;; ============================================================================
-;;; 4) Spans: covering and overlaps
-;;; ============================================================================
-
-  (def text-layer
+  ;; Text with spans and annotations
+  (def text-with-spans
     (-> (empty-graph)
-        (add-node {:type :paragraph
-                   :text "The quick brown fox jumps over the lazy dog"
-                   :span {:start 0 :end 44}})))
+        (add-node {:type :text
+                   :content "The quick brown fox"
+                   :span {:start 0 :end 19}})
+        (add-node {:type :noun :text "fox" :span {:start 16 :end 19}})
+        (add-node {:type :adj :text "quick" :span {:start 4 :end 9}})
+        (add-node {:type :adj :text "brown" :span {:start 10 :end 15}})))
 
-  ;; Single covering slot
-  (covering text-layer 25)
-  ;; => {:kind :node, :start 0, :end 44, :ids #{0}}
+  ;; Find what covers position 17
+  (covering text-with-spans 17)
+  ;; => {:kind :node, :start 16, :end 19, :ids #{1}}
 
-  ;; Overlapping spans as a separate graph/layer
-  (def annotation-layer
-    (-> (empty-graph)
-        (add-node {:type :noun :text "fox"   :span {:start 16 :end 19}})
-        (add-node {:type :verb :text "jumps" :span {:start 20 :end 25}})
-        (add-node {:type :noun :text "dog"   :span {:start 41 :end 44}})))
+  ;; Traverse tree breadth-first
+  (take 5 (bfs-seq tree-graph [0] {:edge-type :child :role :child}))
+  ;; => (0 1 2 3 4) - root, then head/body, then divs
 
-  ;; If you added covering-all:
-  #_(covering-all annotation-layer 21)
-  #_;; => [{:kind :node :id 1 :start 20 :end 25}]
+  ;; Extract subgraph
+  (def sub (subgraph people-graph [0 1]))  ; Just Alice and Bob
+  (edges-of-type sub :knows)  ; => #{0} - their connection preserved
 
-;;; ============================================================================
-;;; 5) Traversals (BFS/DFS) with role/type filters
-;;; ============================================================================
+  ;; Layer composition for complex documents
+  (def document
+    (compose-layers
+     {:text (-> (empty-graph)
+                (add-node {:type :paragraph :content "Hello world"
+                           :span {:start 0 :end 11}}))
+      :format (-> (empty-graph)
+                  (add-node {:type :bold :span {:start 0 :end 5}}))
+      :comments (-> (empty-graph)
+                    (add-node {:type :comment :text "Nice!"
+                               :span {:start 6 :end 11}}))}))
 
-  ;; Build a tiny tree with :child edges
-    (def gtree
-      (build (empty-graph)
-             (fn [b]
-               (let [[b r] (add-node! b {:type :element :name "root"})
-                     [b a] (add-node! b {:type :element :name "a"})
-                     [b b1] (add-node! b {:type :element :name "b"})
-                     [b c] (add-node! b {:type :element :name "c"})
-                     [b _] (add-edge! b {:type :child
-                                         :pins [{:node r :role :parent}
-                                                {:node a :role :child :i 0}]})
-                     [b _] (add-edge! b {:type :child
-                                         :pins [{:node r :role :parent}
-                                                {:node b1 :role :child :i 1}]})
-                     [b _] (add-edge! b {:type :child
-                                         :pins [{:node a :role :parent}
-                                                {:node c :role :child :i 0}]})]
-                 b))))
+  ;; Access layer information
+  (:node-ids document)  ; => {:text 0, :format 1, :comments 2}
 
-  ;; BFS over children
-  (take 10 (bfs-seq gtree [0] {:edge-type :child :role :child}))
-  ;; => (0 1 2 3)  ; root, then a/b, then c
-
-  ;; DFS over children
-  (take 10 (dfs-seq gtree [0] {:edge-type :child :role :child}))
-  ;; => (0 1 3 2)
-
-  ;; Streaming neighbors (seq) if you added neighbors-seq:
-  #_(doall (neighbors-seq gtree 0 :child :child)) ;; => (1 2)
-
-  ;; Ordered children helper (uses :i)
-  (defn children-ordered [g nid]
-    (->> (edges-of-type g :child)
-         (map #(get-in g [:edges %]))
-         (keep (fn [e]
-                 (when (some #(and (= (:role %) :parent) (= (:node %) nid))
-                             (:pins e))
-                   (some #(when (= (:role %) :child) %) (:pins e)))))
-         (sort-by :i)
-         (mapv :node)))
-
-  (children-ordered gtree 0) ;; => [1 2]
-  (children-ordered gtree 1) ;; => [3]
-
-;;; ============================================================================
-;;; 6) Layers & composition
-;;; ============================================================================
-
-  (def composite (compose-layers {:text text-layer
-                                  :annotations annotation-layer}))
-  (:node-ids composite)   ;; => {:text 0, :annotations 1} (ids vary)
-  (:meta-graph composite) ;; => graph of layer-nodes
-
-;;; ============================================================================
-;;; 7) Merge graphs (ID-offset strategy) + reindex
-;;; ============================================================================
-
-  (def merged (merge-graphs g2 g3)) ;; offsets g3 into g2's id space and reindexes
-  (nodes-of-type merged :person) ;; ids from g2; doc nodes from g3 also present
-  (edges-of-type merged :link)   ;; => from g3, remapped
-
-;;; ============================================================================
-;;; 8) Subgraph extraction
-;;; ============================================================================
-
-  ;; keep only Alice + Hypergraph project and connecting edges
-  (def sg (subgraph g2 [0 2]))
-  (keys (:nodes sg))           ;; => (0 2)
-  (edges-of-type sg :works-on) ;; => #{...} if both endpoints kept
-
-;;; ============================================================================
-;;; 9) Round-trip editing pattern (span-driven; sketch)
-;;; ============================================================================
-
-  ;; Find node covering position and compute patch range
-  (let [{:keys [ids]} (covering text-layer 21)
-        nid (first ids)
-        {:keys [span]} (get-in text-layer [:nodes nid])]
-    ;; Use span {:start s :end e} to splice bytes/text externally.
-    ;; Then update node span if needed with (rem-node + add-node) or a dedicated update.
-    [nid span])
-
-;;; ============================================================================
-;;; 10) Diffing two graphs (cheap structural)
-;;; ============================================================================
-
-  (defn diff-ids [a b]
-    {:added   (set/difference (set (keys b)) (set (keys a)))
-     :removed (set/difference (set (keys a)) (set (keys b)))
-     :common  (set/intersection (set (keys a)) (set (keys b)))})
-
-  (defn changed-nodes [gA gB]
-    (let [{:keys [common]} (diff-ids (:nodes gA) (:nodes gB))]
-      (->> common
-           (filter (fn [nid]
-                     (not= (dissoc (get-in gA [:nodes nid]) :span) ;; ignore span changes if you want
-                           (dissoc (get-in gB [:nodes nid]) :span))))
-           set)))
-
-  (defn changed-edges [gA gB]
-    (let [{:keys [common]} (diff-ids (:edges gA) (:edges gB))]
-      (->> common
-           (filter #(not= (get-in gA [:edges %])
-                          (get-in gB [:edges %])))
-           set)))
-
-  (changed-nodes g1 g1') ;; => #{42} (Carol new)
-  (changed-edges g2 g5)  ;; => #{<eid-of-knows>} (removed)
-
-;;; ============================================================================
-;;; 11) Path queries (quick-n-dirty)
-;;; ============================================================================
-
-  ;; all (worker -> project) pairs
-  (def worker->project
-    (for [eid (edges-of-type g2 :works-on)
-          :let [e (get-in g2 [:edges eid])
-                w (some #(when (= (:role %) :worker) (:node %)) (:pins e))
-                p (some #(when (= (:role %) :project) (:node %)) (:pins e))]
-          :when (and w p)]
-      [w p]))
-  worker->project ;; => [[0 2]]
-
-;;; ============================================================================
-;;; 12) Reindex from scratch (after manual merges/imports)
-;;; ============================================================================
-
-  (def g2-re (reindex g2))
-  (= (:ix g2) (:ix g2-re)) ;; => true
-
-;;; ============================================================================
-;;; 13) Streaming traversal with transducers (BFS as source)
-;;; ============================================================================
-
-  ;; If you wired neighbors-seq / queue BFS, you can do:
-  (transduce (comp (filter #(= "Alice" (get-in g2 [:nodes % :name])))
-                   (map #(vector % (get-in g2 [:nodes %]))))
-             conj
-             (bfs-seq g2 [0])) ;; => [[0 {:name "Alice" ...}]]
-
-  ;; Or plain sequence pipelines:
-  (->> (bfs-seq gtree [0] {:edge-type :child :role :child})
-       (map #(get-in gtree [:nodes % :name]))
-       (take 10)))
+  ;; N-ary hyperedge example - keyboard binding
+  (def keybinding-graph
+    (build (empty-graph)
+           (fn [b]
+             (let [[b keymap] (add-node! b {:type :keymap :name "default"})
+                   [b action] (add-node! b {:type :action :name "save"})
+                   [b device] (add-node! b {:type :device :name "keyboard"})
+                   [b ctrl]   (add-node! b {:type :key :name "ctrl"})
+                   [b s-key]  (add-node! b {:type :key :name "s"})
+                   [b _]      (add-edge! b {:type :binding
+                                            :pins [{:node keymap :role :map}
+                                                   {:node action :role :action}
+                                                   {:node device :role :device}
+                                                   {:node ctrl   :role :modifier :i 0}
+                                                   {:node s-key  :role :key :i 1}]
+                                            :attrs {:priority 10}})]
+               b)))))
